@@ -1,0 +1,62 @@
+name: Deploy Medusa Store (Development Mode)
+
+on:
+  push:
+    branches:
+      - main  # or specify your development branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the code
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Step 2: Set up SSH
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.5.4
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+
+      # Step 3: Deploy to EC2
+      - name: Deploy to EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
+            # Update and install necessary packages
+            sudo apt-get update
+            sudo apt-get install -y nodejs npm postgresql postgresql-contrib
+
+            # Install Medusa CLI globally
+            sudo npm install -g @medusajs/medusa-cli
+
+            # Set up PostgreSQL database and user
+            sudo systemctl start postgresql
+            if ! sudo -u postgres psql -c '\l' | grep medusa_db; then
+              sudo -u postgres psql -c "CREATE DATABASE medusa_db;"
+              sudo -u postgres psql -c "CREATE USER medusa_user WITH PASSWORD 'prince';"
+              sudo -u postgres psql -c "ALTER USER medusa_user WITH SUPERUSER;"
+              sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE medusa_db TO medusa_user;"
+            else
+              echo "Database already exists, skipping creation"
+            fi
+
+            # Clone the repository if not already present
+            if [ ! -d "~/my-medusa-store" ]; then
+              git clone https://github.com/07prince/medusa-ec2.git ~/my-medusa-store
+            fi
+
+            cd ~/my-medusa-store
+
+            # Install project dependencies
+            npm install
+
+            # Run database migrations
+            npx medusa migrations run
+
+            # Start Medusa in development mode
+            medusa develop
+          EOF
+        env:
+          EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
